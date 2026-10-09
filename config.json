@@ -1,0 +1,18 @@
+{
+  "start_time": "07:00",
+  "end_time": "07:30",
+  "start_level": 5,
+  "max_level": 100,
+  "curve": 1.0,
+  "tick_seconds": 5,
+  "fade_in_display": true,
+  "monitor_index": 0,
+  "task_time": "07:00",
+  "task_weekdays": [
+    "MON",
+    "TUE",
+    "WED",
+    "THU",
+    "FRI"
+  ]
+}

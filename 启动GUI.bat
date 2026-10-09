@@ -1,0 +1,10 @@
+@echo off
+rem ????????? ???? ??????????
+cd /d "%~dp0"
+where pythonw >nul 2>nul
+if %errorlevel%==0 (
+  start "" pythonw "%~dp0sunrise_alarm.py"
+) else (
+  start "" python "%~dp0sunrise_alarm.py"
+)
+exit /b
