@@ -1,0 +1,91 @@
+/* 日出光闹钟 · 网页版样式（离线，无外网字体/CDN） */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  background: radial-gradient(1200px 600px at 20% -10%, #ffb45722, transparent 60%),
+              linear-gradient(160deg, #0b1220 0%, #101b33 60%, #0b1220 100%);
+  color: #e8eefc;
+  min-height: 100vh;
+  font-size: 14px;
+}
+header.top {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; padding: 18px 26px;
+  background: linear-gradient(90deg, #ff7018 0%, #ffb457 45%, #ffe6b0 100%);
+  color: #221200;
+  box-shadow: 0 8px 30px #00000055;
+}
+.brand { display: flex; align-items: center; gap: 14px; }
+.brand h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
+.brand .sub { margin: 2px 0 0; font-size: 12px; opacity: .8; }
+.sun {
+  width: 42px; height: 42px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff6d8, #ff9e2c 55%, #ff7018 100%);
+  box-shadow: 0 0 22px #ffb457cc, 0 0 44px #ff701866;
+  flex: none;
+}
+.live { text-align: right; }
+.live .bright { display: flex; align-items: baseline; gap: 6px; justify-content: flex-end; }
+.live .bright span { font-size: 40px; font-weight: 800; line-height: 1; }
+.live .bright small { font-size: 12px; opacity: .75; }
+.live .state { font-size: 12px; margin-top: 4px; opacity: .85; max-width: 380px; }
+
+main { padding: 18px 26px 40px; display: grid; gap: 16px; }
+.card {
+  background: #0f1729ee; border: 1px solid #ffffff14; border-radius: 12px;
+  padding: 16px 18px; box-shadow: 0 6px 20px #00000040;
+}
+.card h2 {
+  margin: 0 0 12px; font-size: 15px; color: #ffcf86;
+  border-left: 3px solid #ff7018; padding-left: 9px; letter-spacing: .5px;
+}
+.grid { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 12px 16px; }
+label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: #b9c6e2; }
+label.wide { margin-top: 12px; }
+input, select, textarea {
+  background: #0a101e; color: #e8eefc; border: 1px solid #ffffff22;
+  border-radius: 7px; padding: 8px 10px; font-size: 14px; font-family: inherit;
+  outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: #ffb457; box-shadow: 0 0 0 2px #ffb45733; }
+textarea { resize: vertical; font-family: Consolas, "Courier New", monospace; font-size: 12px; }
+code { background: #ffffff14; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.checks { display: flex; flex-direction: column; gap: 8px; justify-content: flex-end; }
+.chk { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; color: #dbe4f7; }
+.chk input { width: auto; }
+.days { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.days label {
+  flex-direction: row; align-items: center; gap: 6px; background: #ffffff0d;
+  border: 1px solid #ffffff1a; border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  font-size: 13px; color: #dbe4f7;
+}
+.days input { width: auto; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.row:first-of-type { margin-top: 0; }
+label.inl { flex-direction: row; align-items: center; gap: 8px; }
+label.inl input { width: 90px; }
+button {
+  border: 1px solid #ffffff26; background: #1a2540; color: #e8eefc;
+  padding: 9px 15px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  font-family: inherit; transition: .15s;
+}
+button:hover { background: #24325a; border-color: #ffffff44; }
+button.primary { background: linear-gradient(180deg, #ff8a3c, #ff7018); border-color: #ff8a3c; color: #fff; font-weight: 700; }
+button.primary:hover { filter: brightness(1.08); }
+button.ok { background: #1d7a4d; border-color: #27a869; color: #eafff3; }
+button.danger { background: #8a2432; border-color: #b83a4c; color: #ffe9ec; }
+button.ghost { background: #ffffff10; }
+.hint { font-size: 12px; color: #8ea0c4; }
+.log {
+  background: #05090f; border: 1px solid #ffffff14; border-radius: 8px;
+  padding: 12px; margin: 0; min-height: 130px; max-height: 260px; overflow: auto;
+  font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-all; color: #cfe0ff;
+}
+.toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 99;
+  background: #111c33; border: 1px solid #ffb45788; color: #ffe9c7;
+  padding: 12px 16px; border-radius: 10px; max-width: 380px; font-size: 13px;
+  box-shadow: 0 10px 30px #00000066;
+}

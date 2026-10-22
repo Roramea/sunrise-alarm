@@ -47,6 +47,7 @@ LOG_PATH = os.path.join(BASE, "sunrise_alarm.log")
 CRASH_PATH = os.path.join(BASE, "crash.log")
 STATE_PATH = os.path.join(BASE, "state.json")
 STOP_PATH = os.path.join(BASE, "stop.flag")
+SKIP_PATH = os.path.join(BASE, "skip_next.txt")   # 一次性「明天不响」标记
 TASK_NAME = "SunriseAlarm"
 
 WEEKDAYS = [("MON", "周一"), ("TUE", "周二"), ("WED", "周三"), ("THU", "周四"),
@@ -58,8 +59,12 @@ DEFAULT_CONFIG = {
     "start_level": 5,               # 起始亮度（0 会全黑，建议 3~10）
     "max_level": 100,               # 最高亮度
     "curve": 1.0,                   # 1=线性；>1 前段更慢
+    "curve_points": None,           # 关键点 [[进度0~1, 亮度], ...]；给了就按它插值，忽略 curve
+    "holidays": [],                 # 中国法定节假日日期列表 ["YYYY-MM-DD", ...]，命中则跳过
+    "holiday_skip": True,           # 节假日是否跳过（false 时即使命中 holidays 也照常跑）
     "tick_seconds": 5,              # 每隔几秒检查并写一次亮度
     "overlay": True,                # 爬升期间铺全屏日光层
+    "overlay_mode": "sunrise",      # 日光层样式: off/white/sunrise/sky（未配置=sunrise，与旧版一致）
     "hold": True,                   # 到最高亮度后保持，直到手动关闭（像闹钟最后一响）
     "hold_max_minutes": 0,          # 保持上限（分钟）；0 = 不限，一直保持到手动关闭
     "overlay_start_color": [255, 112, 24],    # 日光层起始色（暖橙）
@@ -109,7 +114,13 @@ MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR,
 
 def log(msg: str) -> None:
     line = f"[{dt.datetime.now():%Y-%m-%d %H:%M:%S}] {msg}"
-    print(line, flush=True)
+    # 日志绝不能抛异常：GBK 控制台下打印 ⚠ 等非 GBK 字符会抛 UnicodeEncodeError，
+    # 那会打断爬升线程。打印失败就静默跳过（pythonw 下 sys.stdout 为 None）；文件日志照写。
+    try:
+        if sys.stdout is not None:
+            print(line, flush=True)
+    except Exception:
+        pass
     try:
         with open(LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -336,6 +347,68 @@ def parse_hhmm(text: str) -> dt.time:
     return dt.time(int(h), int(m))
 
 
+# --------------------------------------------------------------------------- 亮度曲线关键点
+
+def _interp_curve_points(points, frac: float) -> float:
+    """按 (进度 x∈0~1, 亮度 y) 关键点做**线性**插值；超出两端范围就取端点值。
+    points 需按 x 升序（调用方保证）。"""
+    xs = [float(p[0]) for p in points]
+    ys = [float(p[1]) for p in points]
+    if frac <= xs[0]:
+        return ys[0]
+    if frac >= xs[-1]:
+        return ys[-1]
+    for i in range(1, len(xs)):
+        if frac <= xs[i]:
+            x0, x1, y0, y1 = xs[i - 1], xs[i], ys[i - 1], ys[i]
+            if x1 == x0:
+                return y1
+            return y0 + (y1 - y0) * (frac - x0) / (x1 - x0)
+    return ys[-1]
+
+
+def brightness_at(cfg: dict, frac: float) -> int:
+    """进度 frac(0~1) → 目标亮度（整数）。
+    - 给了 curve_points：按关键点线性插值，返回绝对亮度。
+    - 没给：沿用原有 start_level + (max_level-start_level) * frac**curve。
+    （单调三次插值未使用，保持线性，改动更小、可预期。）"""
+    frac = max(0.0, min(1.0, float(frac)))
+    pts = cfg.get("curve_points")
+    if pts:
+        return int(round(_interp_curve_points(pts, frac)))
+    start_lv = int(cfg.get("start_level", 5))
+    max_lv = int(cfg.get("max_level", 100))
+    curve = float(cfg.get("curve", 1.0)) or 1.0
+    return int(round(start_lv + (max_lv - start_lv) * (frac ** curve)))
+
+
+def curve_ratio(cfg: dict, frac: float) -> float:
+    """进度 frac(0~1) → 0~1 的完成比例（写 state / 日光层颜色用）。
+    与 brightness_at 形状一致：给 curve_points 时按关键点插值并归一化；否则 frac**curve。
+    没给 curve_points 时输出与改前的 `frac ** curve` 完全相同。"""
+    frac = max(0.0, min(1.0, float(frac)))
+    pts = cfg.get("curve_points")
+    if pts:
+        lo, hi = float(pts[0][1]), float(pts[-1][1])
+        y = _interp_curve_points(pts, frac)
+        return 0.0 if hi == lo else max(0.0, min(1.0, (y - lo) / (hi - lo)))
+    return frac ** (float(cfg.get("curve", 1.0)) or 1.0)
+
+
+# --------------------------------------------------------------------------- 节假日 / 一次性跳过
+
+def skip_reason(cfg: dict, today: dt.date | None = None) -> str | None:
+    """需要静默跳过本次运行吗？返回原因字符串，不需要返回 None。
+    命中任一即跳过：①今天是 holidays 里的日期且 holiday_skip 为真；②存在 skip_next.txt。"""
+    today = today or dt.date.today()
+    holidays = [str(d) for d in (cfg.get("holidays") or [])]
+    if cfg.get("holiday_skip", True) and today.isoformat() in holidays:
+        return f"今天是节假日 {today.isoformat()}（holidays 命中）"
+    if os.path.exists(SKIP_PATH):
+        return "存在一次性跳过标记 skip_next.txt"
+    return None
+
+
 def write_state(**kw) -> None:
     try:
         with open(STATE_PATH, "w", encoding="utf-8") as f:
@@ -392,8 +465,8 @@ def run_ramp(cfg: dict, seconds: int | None = None, tick: float | None = None,
             elapsed = time.monotonic() - t0
             if elapsed >= total:
                 break
-            frac = min(1.0, (elapsed / total) ** curve)
-            target = int(round(start_lv + (max_lv - start_lv) * frac))
+            frac = curve_ratio(cfg, elapsed / total)
+            target = brightness_at(cfg, elapsed / total)
             if target != last:
                 if not mon.set_brightness(target):
                     log(f"写入亮度 {target} 失败（可能又进省电态），重试点亮")
@@ -478,6 +551,45 @@ def _lerp_color(c1, c2, f):
     return "#%02x%02x%02x" % tuple(int(round(a + (b - a) * f)) for a, b in zip(c1, c2))
 
 
+def _lerp_rgb(c1, c2, f):
+    f = max(0.0, min(1.0, f))
+    return tuple(int(round(a + (b - a) * f)) for a, b in zip(c1, c2))
+
+
+def _hex(rgb) -> str:
+    return "#%02x%02x%02x" % tuple(int(v) for v in rgb)
+
+
+OVERLAY_MODES = ("off", "white", "sunrise", "sky")
+# sky 模式竖直渐变端点色：顶部偏亮/偏蓝，底部暖橙（随进度 frac 逐渐变亮）
+SKY_TOP_START = (90, 130, 205)
+SKY_TOP_END = (205, 230, 255)
+SKY_BOTTOM_START = (255, 120, 45)
+SKY_BOTTOM_END = (255, 240, 205)
+
+
+def overlay_colors(cfg: dict, mode: str, frac: float, c1, c2):
+    """按 overlay_mode 算当前帧颜色（返回 RGB 元组）。
+    返回 (solid, top, bottom)：solid 非 None 时用纯色；否则按 top→bottom 画竖直渐变。
+    未知/未配置的模式一律走 sunrise（暖橙→白），与旧版逐帧行为完全一致。"""
+    mode = (mode or "sunrise").strip().lower()
+    if mode == "white":
+        return ((255, 255, 255), None, None)     # 纯白，亮度由背光曲线决定
+    if mode == "sky":                       # 拟日光：上亮/偏蓝，下暖橙
+        return (None, _lerp_rgb(SKY_TOP_START, SKY_TOP_END, frac),
+                _lerp_rgb(SKY_BOTTOM_START, SKY_BOTTOM_END, frac))
+    return (_lerp_rgb(c1, c2, frac), None, None)
+
+
+def _draw_vgradient(canvas, w: int, h: int, top, bottom, bands: int = 64) -> None:
+    """在 canvas 上画一条顶→底的竖直渐变（覆盖全屏），用于 sky 模式。"""
+    canvas.delete("grad")
+    for i in range(bands):
+        col = _lerp_color(top, bottom, i / (bands - 1))
+        canvas.create_rectangle(0, int(h * i / bands), w, int(h * (i + 1) / bands) + 1,
+                                outline="", fill=col, tags="grad")
+
+
 def start_global_hotkey(on_trigger, combo_vk=VK_Q) -> dict:
     """注册全局热键 Ctrl+Alt+Q（即使焦点不在日光层上也能退出）。"""
     info = {"thread_id": None, "registered": False}
@@ -509,6 +621,12 @@ def run_overlay(cfg: dict, abort: threading.Event, total: int, label: str = "",
 
     c1 = tuple(cfg.get("overlay_start_color", DEFAULT_CONFIG["overlay_start_color"]))
     c2 = tuple(cfg.get("overlay_end_color", DEFAULT_CONFIG["overlay_end_color"]))
+    mode = str(cfg.get("overlay_mode", "sunrise")).strip().lower()
+    log(f"日光层样式: {mode if mode in OVERLAY_MODES else 'sunrise'}")
+    if mode == "off":                      # off 不铺全屏层
+        return
+    _solid0, _top0, _ = overlay_colors(cfg, mode, 0.0, c1, c2)
+    init_bg = _hex(_solid0 if _solid0 is not None else _top0)
     root = tk.Tk()
 
     def _tk_callback_error(exc, val, tb):          # Tk 回调里的异常默认只往 stderr 打，pythonw 下会丢
@@ -516,19 +634,23 @@ def run_overlay(cfg: dict, abort: threading.Event, total: int, label: str = "",
 
     root.report_callback_exception = _tk_callback_error
     root.title("日出光闹钟")
-    root.configure(bg=_lerp_color(c1, c2, 0))
+    root.configure(bg=init_bg)
     root.attributes("-topmost", True)
     try:
         root.attributes("-fullscreen", True)
     except tk.TclError:
         pass
-    canvas = tk.Canvas(root, highlightthickness=0, bd=0, bg=_lerp_color(c1, c2, 0))
+    canvas = tk.Canvas(root, highlightthickness=0, bd=0, bg=init_bg)
     canvas.pack(fill="both", expand=True)
     hint = canvas.create_text(0, 0, text="", fill="#333333", font=("Microsoft YaHei", 16))
 
     def show_hint(text):
         canvas.itemconfigure(hint, text=text)
         canvas.coords(hint, root.winfo_screenwidth() // 2, root.winfo_screenheight() - 80)
+        try:
+            canvas.tag_raise(hint)          # 渐变模式下每帧重画的色块不能盖住提示文字
+        except tk.TclError:
+            pass
 
     show_hint("日出光闹钟 · 按 ESC 或 Ctrl+Alt+Q 退出")
     try:
@@ -558,14 +680,24 @@ def run_overlay(cfg: dict, abort: threading.Event, total: int, label: str = "",
             quit_overlay()
             return
         el = time.monotonic() - t0
-        frac = min(1.0, (el / total) ** float(cfg.get("curve", 1.0) or 1.0)) if total else 1.0
+        frac = curve_ratio(cfg, el / total) if total else 1.0
         state["frac"] = frac
         if on_progress:
             on_progress(frac)
-        col = _lerp_color(c1, c2, frac)
+        col = overlay_colors(cfg, mode, frac, c1, c2)
+        solid, top, bottom = col
         try:
-            canvas.configure(bg=col)
-            root.configure(bg=col)
+            if solid is not None:
+                canvas.delete("grad")
+                canvas.configure(bg=_hex(solid))
+                root.configure(bg=_hex(solid))
+            else:
+                w = canvas.winfo_width() or root.winfo_screenwidth()
+                h = canvas.winfo_height() or root.winfo_screenheight()
+                _draw_vgradient(canvas, w, h, top, bottom)
+                canvas.configure(bg=_hex(top))
+                root.configure(bg=_hex(top))
+                canvas.tag_raise(hint)
         except tk.TclError:
             return
         if el >= total:
@@ -712,6 +844,9 @@ def run_alarm(cfg: dict, seconds=None, tick=None, restore=False, label="爬升",
               overlay: bool | None = None, hold: bool | None = None) -> None:
     """一次完整流程：点亮 + 爬升 + 到顶保持（+ 日光层），日光层跑在主线程。"""
     use_overlay = cfg.get("overlay", True) if overlay is None else overlay
+    if str(cfg.get("overlay_mode", "sunrise")).strip().lower() == "off":
+        use_overlay = False                    # overlay_mode=off 时不创建全屏层
+        log("日光层样式: off（不铺全屏层）")
     total = int(seconds) if seconds else ramp_seconds(cfg["start_time"], cfg["end_time"])
     abort = threading.Event()
 
@@ -774,6 +909,7 @@ def cmd_status(cfg: dict) -> None:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="日出光闹钟（强制点亮 + 背光缓亮 + 全屏日光层）")
     p.add_argument("--run", action="store_true", help="按 config.json 完整跑一次（计划任务用）")
+    p.add_argument("--skip-next", action="store_true", help="跳过下一次 --run（写 skip_next.txt 标记）")
     p.add_argument("--preview", type=float, metavar="SECONDS", help="把整段压缩到 N 秒预览")
     p.add_argument("--stop", action="store_true", help="停止正在跑的爬升")
     p.add_argument("--status", action="store_true", help="显示当前亮度/状态/计划任务")
@@ -808,6 +944,11 @@ def main(argv=None) -> int:
     if args.hold_minutes is not None:
         cfg["hold_max_minutes"] = args.hold_minutes
 
+    if args.skip_next:
+        with open(SKIP_PATH, "w", encoding="utf-8") as f:
+            f.write(dt.date.today().isoformat() + "\n")
+        print(f"已设置：下一次 --run 将跳过（标记 {SKIP_PATH}）。")
+        return 0
     if args.list:
         for m in list_monitors():
             print(f"[{m['index']}] {m['desc']}")
@@ -854,6 +995,14 @@ def main(argv=None) -> int:
                   overlay=False if args.no_overlay else True)
         return 0
     if args.run:
+        reason = skip_reason(cfg)
+        if reason:
+            log(f"跳过本次运行：{reason}")
+            try:
+                os.remove(SKIP_PATH)
+            except OSError:
+                pass
+            return 0                       # 计划任务记成成功（静默退出）
         run_alarm(cfg, label="爬升", overlay=False if args.no_overlay else None)
         return 0
 
@@ -891,6 +1040,7 @@ class SunriseGUI:
         self.v_curve = tk.StringVar(value=str(cfg["curve"]))
         self.v_task_time = tk.StringVar(value=cfg.get("task_time", cfg["start_time"]))
         self.v_overlay = tk.BooleanVar(value=bool(cfg.get("overlay", True)))
+        self.v_overlay_mode = tk.StringVar(value=str(cfg.get("overlay_mode", "sunrise")))
         self.v_hold = tk.BooleanVar(value=bool(cfg.get("hold", True)))
         self.v_hold_min = tk.StringVar(value=str(cfg.get("hold_max_minutes", 0)))
 
@@ -910,6 +1060,11 @@ class SunriseGUI:
                         variable=self.v_hold).grid(row=4, column=0, columnspan=2, sticky="w", **pad)
         ttk.Label(box, text="保持上限(分钟,0=不限)").grid(row=4, column=2, sticky="e", **pad)
         ttk.Entry(box, textvariable=self.v_hold_min, width=8).grid(row=4, column=3, sticky="w", **pad)
+        ttk.Label(box, text="日光层样式").grid(row=5, column=0, sticky="e", **pad)
+        ttk.Combobox(box, textvariable=self.v_overlay_mode, state="readonly", width=10,
+                     values=list(OVERLAY_MODES)).grid(row=5, column=1, sticky="w", **pad)
+        ttk.Label(box, text="off/white/sunrise/sky", foreground="#666").grid(
+            row=5, column=2, columnspan=2, sticky="w", **pad)
 
         day_box = ttk.LabelFrame(root, text="哪几天跑计划任务")
         day_box.grid(row=1, column=0, sticky="ew", **pad)
@@ -947,6 +1102,7 @@ class SunriseGUI:
         c["max_level"] = int(float(self.v_to.get()))
         c["curve"] = float(self.v_curve.get())
         c["overlay"] = bool(self.v_overlay.get())
+        c["overlay_mode"] = self.v_overlay_mode.get().strip() or "sunrise"
         c["hold"] = bool(self.v_hold.get())
         c["hold_max_minutes"] = float(self.v_hold_min.get() or 0)
         c["task_time"] = self.v_task_time.get().strip()

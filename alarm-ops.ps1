@@ -5,7 +5,7 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File alarm-ops.ps1 -Action restore
 #     -> 把 config.json 恢复成日常值（07:00 / 07:30）、把计划任务触发器改回 07:00、并禁用任务
 #     -> 打印 RESTORED 或 RESTORE-FAIL: <原因>
-param([Parameter(Mandatory=$true)][ValidateSet('check','restore')][string]$Action)
+param([Parameter(Mandatory=$true)][ValidateSet('check','restore','restore-on')][string]$Action)
 
 $ErrorActionPreference = 'Continue'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -18,7 +18,7 @@ if ($Action -eq 'check') {
     exit 0
 }
 
-if ($Action -eq 'restore') {
+if ($Action -eq 'restore' -or $Action -eq 'restore-on') {
     $ok = $true
     # 1) config.json 回到日常
     $json = @'
@@ -48,8 +48,13 @@ if ($Action -eq 'restore') {
         $trig = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 7:00AM
         Set-ScheduledTask -TaskName $taskName -Trigger $trig -ErrorAction Stop | Out-Null
     } catch { $ok = $false; Write-Output ('RESTORE-FAIL trigger: ' + $_.Exception.Message) }
-    try { Disable-ScheduledTask -TaskName $taskName -ErrorAction Stop | Out-Null } catch { $ok = $false; Write-Output ('RESTORE-FAIL disable: ' + $_.Exception.Message) }
+    if ($Action -eq 'restore-on') {
+        try { Enable-ScheduledTask -TaskName $taskName -ErrorAction Stop | Out-Null } catch { $ok = $false; Write-Output ('RESTORE-FAIL enable: ' + $_.Exception.Message) }
+    } else {
+        try { Disable-ScheduledTask -TaskName $taskName -ErrorAction Stop | Out-Null } catch { $ok = $false; Write-Output ('RESTORE-FAIL disable: ' + $_.Exception.Message) }
+    }
 
-    if ($ok) { Write-Output 'RESTORED' } else { Write-Output 'RESTORED-WITH-WARNINGS' }
+    $tag = if ($Action -eq 'restore-on') { 'RESTORED-ON' } else { 'RESTORED' }
+    if ($ok) { Write-Output $tag } else { Write-Output ($tag + '-WITH-WARNINGS') }
     exit 0
 }

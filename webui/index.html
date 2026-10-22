@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>日出光闹钟 · 网页版</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="sun"></span>
+    <div>
+      <h1>日出光闹钟</h1>
+      <p class="sub">网页版界面 · 背光逻辑复用 sunrise_alarm.py</p>
+    </div>
+  </div>
+  <div class="live">
+    <div class="bright">
+      <span id="bnum">--</span><small>当前亮度</small>
+    </div>
+    <div class="state" id="stateText">正在连接…</div>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>时间与亮度</h2>
+    <div class="grid">
+      <label>开始时间<input id="start_time" placeholder="07:00"></label>
+      <label>到最高亮度<input id="end_time" placeholder="07:30"></label>
+      <label>起始亮度<input id="start_level" type="number" min="0" max="100"></label>
+      <label>最高亮度<input id="max_level" type="number" min="0" max="100"></label>
+      <label>亮度曲线 curve<input id="curve" type="number" step="0.1"></label>
+      <label>写入间隔 tick(秒)<input id="tick_seconds" type="number" step="0.5" min="0.2"></label>
+    </div>
+    <label class="wide">曲线关键点 curve_points（JSON，如 <code>[[0,5],[0.5,40],[1,100]]</code>；留空则用 curve）
+      <textarea id="curve_points" rows="2" placeholder="留空 = 用上面的 curve"></textarea>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2>日光层与保持</h2>
+    <div class="grid">
+      <label>日光层样式 overlay_mode
+        <select id="overlay_mode">
+          <option value="off">off（不铺）</option>
+          <option value="white">white</option>
+          <option value="sunrise">sunrise</option>
+          <option value="sky">sky</option>
+        </select>
+      </label>
+      <label>显示器序号 monitor_index<input id="monitor_index" type="number" min="0"></label>
+      <label>保持上限 hold_max_minutes（0=不限）<input id="hold_max_minutes" type="number" step="1" min="0"></label>
+      <div class="checks">
+        <label class="chk"><input type="checkbox" id="overlay"> 爬升时铺全屏日光层（ESC 退出）</label>
+        <label class="chk"><input type="checkbox" id="hold"> 到顶后保持，直到手动关闭</label>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>计划任务</h2>
+    <div class="grid">
+      <label>计划任务时刻 task_time<input id="task_time" placeholder="07:00"></label>
+    </div>
+    <div class="days" id="days"></div>
+    <div class="row">
+      <button id="btnInstall" class="ghost">安装/更新计划任务（需管理员）</button>
+      <button id="btnRemove" class="ghost">删除计划任务</button>
+      <button id="btnTaskQuery" class="ghost">查看任务状态</button>
+      <button id="btnSkip" class="ghost">跳过下一次</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>动作</h2>
+    <div class="row">
+      <label class="inl">预览秒数<input id="previewSecs" type="number" min="1" value="10"></label>
+      <button id="btnPreview" class="primary">立即预览</button>
+      <button id="btnStart">立即开始（按 config）</button>
+      <button id="btnStop" class="danger">停止</button>
+      <button id="btnWake">只测点亮屏幕</button>
+      <button id="btnRead">读当前亮度</button>
+      <button id="btnList">列显示器</button>
+    </div>
+    <div class="row">
+      <button id="btnSave" class="ok">保存到 config.json</button>
+      <button id="btnReload" class="ghost">重新载入</button>
+      <span class="hint">预览默认不保持（<code>--preview N --no-hold</code>）</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>输出 / 日志</h2>
+    <pre id="log" class="log"></pre>
+    <div class="row">
+      <button id="btnClearLog" class="ghost">清空日志</button>
+      <label class="chk inl"><input type="checkbox" id="autoPoll" checked> 自动刷新亮度/状态（每 2.5 秒）</label>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
